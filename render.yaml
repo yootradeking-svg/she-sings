@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: she-sings
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: singapore
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: PREFIX
+        value: "!"
+      - key: STAY_CONNECTED
+        value: "true"
+      - key: DEFAULT_VOLUME
+        value: "0.5"
