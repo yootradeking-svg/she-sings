@@ -721,8 +721,46 @@ def start_health_server() -> None:
     log.info("health server listening on 0.0.0.0:%s", port)
 
 
+def _retry_wait(exc: discord.HTTPException, fallback: int) -> int:
+    """Honour Retry-After when Discord sends one; otherwise use our backoff."""
+    try:
+        value = exc.response.headers.get("Retry-After")
+        if value:
+            return max(fallback, min(900, int(float(value))))
+    except Exception:
+        pass
+    return fallback
+
+
+async def run_with_backoff() -> None:
+    """Discord rate-limits by IP. Shared hosts (Render, Railway, Fly) get 429s
+    that clear in minutes. Hold the process alive and retry the login instead of
+    exiting, so the container never crash-loops into a longer ban. The health
+    server is already up, so the deploy reads Live while we wait."""
+    delay = 30
+    attempt = 0
+
+    async with bot:
+        while True:
+            attempt += 1
+            try:
+                await bot.login(TOKEN)
+            except discord.HTTPException as exc:
+                if exc.status != 429:
+                    raise
+                wait = _retry_wait(exc, min(900, delay))
+                log.warning("429 from Discord — attempt %d, holding %ds before retry",
+                            attempt, wait)
+                await asyncio.sleep(wait)
+                delay = min(900, delay * 2)
+                continue
+            break
+
+        await bot.connect(reconnect=True)
+
+
 if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("DISCORD_TOKEN missing — fill .env")
     start_health_server()
-    bot.run(TOKEN, log_handler=None)
+    asyncio.run(run_with_backoff())
